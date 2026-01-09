@@ -5,7 +5,10 @@ ROOT="/Workspace"
 BUILD="${ROOT}/build"
 PROJ="${ROOT}/Project"
 
-# Prefer shared build outputs, fallback to SWC build dirs
+MOSQ_DIR="/mosquitto"
+MOSQ_CONF="${MOSQ_DIR}/mosquitto.conf"
+MOSQ_LOG="${MOSQ_DIR}/mosquitto.log"
+
 pick_exe() {
   local name="$1"
   local a="${BUILD}/${name}"
@@ -29,15 +32,24 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# In 1-container mode, apps should connect to localhost
 export MQTT_HOST="${MQTT_HOST:-127.0.0.1}"
 export MQTT_PORT="${MQTT_PORT:-1883}"
 
-echo "[ENTRY] Starting mosquitto (broker) ..."
-mosquitto -c /etc/mosquitto/mosquitto.conf &
+# Ensure mosquitto folder exists + log file is created
+mkdir -p "${MOSQ_DIR}"
+
+if [[ ! -f "${MOSQ_CONF}" ]]; then
+  echo "[ERROR] Missing mosquitto config at ${MOSQ_CONF}"
+  exit 3
+fi
+
+touch "${MOSQ_LOG}"
+chmod 666 "${MOSQ_LOG}" || true
+
+echo "[ENTRY] Starting mosquitto (broker) using ${MOSQ_CONF}"
+mosquitto -c "${MOSQ_CONF}" &
 MOSQ_PID=$!
 
-# Wait for broker port to be open (hard timeout, no hanging)
 echo "[ENTRY] Waiting for broker ${MQTT_HOST}:${MQTT_PORT} (max 3s)..."
 ok=0
 for _ in {1..6}; do
@@ -52,7 +64,7 @@ if [[ "$ok" -ne 1 ]]; then
   exit 2
 fi
 
-echo "[ENTRY] Building..."
+# Build all apps
 cd "$PROJ"
 make all
 
@@ -63,7 +75,6 @@ GATE="$(pick_exe gate_app)"
 echo "[ENTRY] Starting backoffice in background: $BACKOFFICE"
 "$BACKOFFICE" &
 BO_PID=$!
-echo "[ENTRY] backoffice PID=$BO_PID"
 
 while true; do
   echo ""
