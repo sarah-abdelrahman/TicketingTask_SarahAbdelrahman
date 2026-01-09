@@ -2,7 +2,7 @@
 Subway Ticketing system simulating ticket vending machine, entrance gate and Backoffice system create and validate the tickets.
 
 # Project Tree:
-
+```text
 .
 ├── mosquitto/
 │   └── mosquitto.conf
@@ -14,7 +14,7 @@ Subway Ticketing system simulating ticket vending machine, entrance gate and Bac
 │   │   ├── Src/
 │   │   │   └── Backoffice_app.cpp
 │   │   ├── tests/
-│   │   └── CMakeLists.txt
+│   │   └── CMakeLists.txt 
 │   │
 │   ├── Gate_SWC/
 │   │   ├── include/
