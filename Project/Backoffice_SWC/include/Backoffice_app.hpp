@@ -8,12 +8,14 @@
 // Configuration (no magic numbers)
 // ============================
 struct BackOfficeConfig {
-    std::string bindIp = "127.0.0.1";         // same container access
-    uint16_t port = 8080;                     // REST port
-    int listenBacklog = 5;                    // pending connections
-    size_t readBufferSize = 4096;             // request buffer
-    std::string ticketsPath = "tickets_stock.json"; // stock file
-    std::string ticketsEndpoint = "/api/v1/tickets";
+    std::string bindIp = "127.0.0.1";                 // same container access
+    uint16_t port = 8080;                             // REST port
+    int listenBacklog = 5;                            // pending connections
+    size_t readBufferSize = 4096;                     // request buffer
+    std::string ticketsPath = "tickets_stock.json";   // stock file
+
+    std::string ticketsEndpoint = "/api/v1/tickets";  // create ticket
+    std::string validateEndpoint = "/api/v1/validate";// validate ticket (NEW)
 };
 
 // ============================
@@ -46,8 +48,10 @@ class TicketStock {
 public:
     explicit TicketStock(std::string filePath);
 
-    // Append ticket entry to stock JSON file
     void append(const Ticket& t);
+
+    // NEW: used by validation endpoint
+    bool containsTicketBase64(const std::string& ticketBase64, Ticket& out) const;
 
 private:
     std::string m_filePath;
@@ -63,7 +67,6 @@ class BackOfficeServer {
 public:
     BackOfficeServer(BackOfficeConfig cfg, TicketStock& stock);
 
-    // blocking loop
     int run();
 
 private:
@@ -75,10 +78,12 @@ private:
 
     // Routing & handlers
     bool isTicketCreateRequest(const std::string& req) const;
+    bool isValidateRequest(const std::string& req) const;              // NEW
     std::string extractBody(const std::string& req) const;
 
     // Business logic
     std::string handleCreateTicket(const std::string& bodyJson);
+    std::string handleValidateTicket(const std::string& bodyJson);     // NEW
 
     // Response builders
     static std::string httpJsonResponse(int statusCode, const std::string& jsonBody);
