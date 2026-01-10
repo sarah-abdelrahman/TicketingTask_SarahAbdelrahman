@@ -1,0 +1,128 @@
+root@15b173588139:/Workspace/Project# ./Entry_Point.sh
+[ENTRY] Starting mosquitto (broker) using /Workspace/mosquitto/mosquitto.conf
+[ENTRY] Waiting for broker 127.0.0.1:1883 (max 3s)...
+1768076581: mosquitto version 2.0.11 starting
+1768076581: Config loaded from /Workspace/mosquitto/mosquitto.conf.
+1768076581: Opening ipv4 listen socket on port 1883.
+1768076581: Opening ipv6 listen socket on port 1883.
+1768076581: mosquitto version 2.0.11 running
+1768076582: New connection from 127.0.0.1:43796 on port 1883.
+1768076582: Client <unknown> closed its connection.
+[ENTRY] All executables found. Skipping build.
+[ENTRY] Starting backoffice in background: /Workspace/build/backoffice_app
+ enter a number to select an option
+1) Select TVM if you want to puchase a new ticket
+2) Select Gate if You want to validate your ticket
+q) Quit
+Choice: [BackOffice] Listening on http://127.0.0.1:8080
+[BackOffice] Endpoint: POST /api/v1/tickets
+[BackOffice] Validate: POST /api/v1/validate
+[BackOffice] Stock file: tickets_stock.json
+1
+[TVM] MQTT=127.0.0.1:1883
+[TVM] BackOffice=http://127.0.0.1:8080
+[TVM] ValidationTopic=Sale/request
+[TVM] LogFile=tickets.json
+[MQTT] Connecting to tcp://127.0.0.1:1883 ...
+1768076594: New connection from 127.0.0.1:55402 on port 1883.
+1768076594: New client connected from 127.0.0.1:55402 as tvm-client (p2, c1, k20).
+1768076594: No will message specified.
+1768076594: Sending CONNACK to tvm-client (0, 0)
+[MQTT] Connected successfully
+
+Do you want to purchas a ticket? (y/n):  t
+1768076599: Received DISCONNECT from tvm-client
+1768076599: Client tvm-client disconnected.
+[MQTT] Disconnected successfully
+ enter a number to select an option
+1) Select TVM if you want to puchase a new ticket
+2) Select Gate if You want to validate your ticket
+q) Quit
+Choice: 1
+[TVM] MQTT=127.0.0.1:1883
+[TVM] BackOffice=http://127.0.0.1:8080
+[TVM] ValidationTopic=Sale/request
+[TVM] LogFile=tickets.json
+[MQTT] Connecting to tcp://127.0.0.1:1883 ...
+1768076612: New connection from 127.0.0.1:60304 on port 1883.
+1768076612: New client connected from 127.0.0.1:60304 as tvm-client (p2, c1, k20).
+1768076612: No will message specified.
+1768076612: Sending CONNACK to tvm-client (0, 0)
+[MQTT] Connected successfully
+
+Do you want to purchas a ticket? (y/n):  y
+
+Enter validity days: 3
+Enter line number: 2
+1768076617: Received PUBLISH from tvm-client (d0, q1, r0, m1, 'Sale/request', ... (214 bytes))
+1768076617: Sending PUBACK to tvm-client (m1, rc0)
+[TVM] Published successfully
+       Topic: Sale/request
+       Payload: {"creationDate":"Sat Jan 10 20:23:37 2026","lineNumber":"2","requestId":"bd96f9c713a422be","ticketBase64":"O2NyZWF0aW9uRGF0ZVV0Yz0yMDI2LTAxLTEwVDIwOjIzOjM3Wjt2YWxpZGl0eURheXM9MztsaW5lTnVtYmVyPTI=","validityDays":3}
+
+[TVM] Publish success
+[TVM] Dear Costumer Your ticker ID is : O2NyZWF0aW9uRGF0ZVV0Yz0yMDI2LTAxLTEwVDIwOjIzOjM3Wjt2YWxpZGl0eURheXM9MztsaW5lTnVtYmVyPTI=
+[TVM] Copy it to validate it on GATE
+Ticket created successfully:
+
+Do you want to purchas a ticket? (y/n):  1
+1768076619: Received DISCONNECT from tvm-client
+1768076619: Client tvm-client disconnected.
+[MQTT] Disconnected successfully
+ enter a number to select an option
+1) Select TVM if you want to puchase a new ticket
+2) Select Gate if You want to validate your ticket
+q) Quit
+Choice: 1
+[TVM] MQTT=127.0.0.1:1883
+[TVM] BackOffice=http://127.0.0.1:8080
+[TVM] ValidationTopic=Sale/request
+[TVM] LogFile=tickets.json
+[MQTT] Connecting to tcp://127.0.0.1:1883 ...
+1768076633: New connection from 127.0.0.1:40252 on port 1883.
+1768076633: New client connected from 127.0.0.1:40252 as tvm-client (p2, c1, k20).
+1768076633: No will message specified.
+1768076633: Sending CONNACK to tvm-client (0, 0)
+[MQTT] Connected successfully
+
+Do you want to purchas a ticket? (y/n):  y
+
+Enter validity days: 14
+Enter line number: 2
+1768076640: Received PUBLISH from tvm-client (d0, q1, r0, m1, 'Sale/request', ... (215 bytes))
+1768076640: Sending PUBACK to tvm-client (m1, rc0)
+[TVM] Published successfully
+       Topic: Sale/request
+       Payload: {"creationDate":"Sat Jan 10 20:24:00 2026","lineNumber":"2","requestId":"ab2a73a9f05520e2","ticketBase64":"O2NyZWF0aW9uRGF0ZVV0Yz0yMDI2LTAxLTEwVDIwOjI0OjAwWjt2YWxpZGl0eURheXM9MTQ7bGluZU51bWJlcj0y","validityDays":14}
+
+[TVM] Publish success
+[TVM] Dear Costumer Your ticker ID is : O2NyZWF0aW9uRGF0ZVV0Yz0yMDI2LTAxLTEwVDIwOjI0OjAwWjt2YWxpZGl0eURheXM9MTQ7bGluZU51bWJlcj0y
+[TVM] Copy it to validate it on GATE
+Ticket created successfully:
+
+Do you want to purchas a ticket? (y/n):  n
+1768076659: Received DISCONNECT from tvm-client
+1768076659: Client tvm-client disconnected.
+[MQTT] Disconnected successfully
+ enter a number to select an option
+1) Select TVM if you want to puchase a new ticket
+2) Select Gate if You want to validate your ticket
+q) Quit
+Choice: 2
+[GATE] BackOffice Validate URL: http://127.0.0.1:8080/api/v1/validate
+
+Enter ticketBase64 (or 'exit'): O2NyZWF0aW9uRGF0ZVV0Yz0yMDI2LTAxLTEwVDIwOjI0OjAwWjt2YWxpZGl0eURheXM9MTQ7bGluZU51bWJlcj0y
+[GATE] Ticket VALID
+
+Enter ticketBase64 (or 'exit'): O2NyZWF0aW9uRGF0ZVV0Yz0yMDI2LTAxLTEwVDE4OjA0OjI1Wjt2YWxpZGl0eURheXM9MzA7bGluZU51bWJlcj0y
+[GATE] Ticket INVALID
+
+Enter ticketBase64 (or 'exit'): O2NyZWF0aW9uRGF0ZVV0Yz0yMDI2LTAxLTEwVDIwOjI0OjAwWjt2YWxpZGl0eURheXM9MTQ7bGluZU51bWJlcj0w
+[GATE] Ticket INVALID
+
+Enter ticketBase64 (or 'exit'): exit
+ enter a number to select an option
+1) Select TVM if you want to puchase a new ticket
+2) Select Gate if You want to validate your ticket
+q) Quit
+Choice: q
