@@ -1,0 +1,26 @@
+@startuml
+title Back-Office - Component Diagram
+
+package "Back-Office Application" {
+  [BackOfficeServer] as Server
+  [TicketCreationController] as Controller
+  [TicketFactory] as Factory
+  [TicketStock] as Stock
+  [Base64] as B64
+  [JsonSerializer] as Json
+}
+
+node "TVM_app" as TVM
+database "tickets_stock.json" as StockFile
+
+TVM --> Server : HTTP POST /api/v1/tickets\n{validityDays,lineNumber,requestId}
+Server --> Controller : route + extract body
+Controller --> Factory : createTicket(request)
+Factory --> B64 : encode(ticketPayload)
+Factory --> Stock : append(ticket)
+Stock --> Json : serialize/parse JSON array
+Json --> StockFile : write/read
+
+Controller --> Server : {success, ticketBase64}
+Server --> TVM : HTTP 200 JSON\n{success, ticketBase64}
+@enduml
