@@ -1,0 +1,69 @@
+@startuml
+title Back-Office - Class Diagram (based on current code)
+
+class BackOfficeConfig {
+  +string bindIp
+  +uint16 port
+  +int listenBacklog
+  +size_t readBufferSize
+  +string ticketsPath
+  +string ticketsEndpoint
+}
+
+class Ticket {
+  +string creationDateUtc
+  +int validityDays
+  +string lineNumber
+  +string ticketBase64
+}
+
+class TimeUtils {
+  +{static} string nowUtcIso8601()
+}
+
+class Base64 {
+  +{static} string encode(in: string) : string
+}
+
+class TicketStock {
+  -string m_filePath
+  +TicketStock(filePath: string)
+  +void append(t: Ticket)
+  -json loadOrCreateArray() : json
+  -void saveArray(arr: json)
+}
+
+class BackOfficeServer {
+  -BackOfficeConfig m_cfg
+  -TicketStock& m_stock
+  +BackOfficeServer(cfg: BackOfficeConfig, stock: TicketStock&)
+  +int run()
+  -int createListenSocket()
+  -void handleClient(clientFd: int)
+  -bool isTicketCreateRequest(req: string) const
+  -string extractBody(req: string) const
+  -string handleCreateTicket(bodyJson: string)
+  -{static} const char* statusText(statusCode: int)
+  -{static} string httpJsonResponse(statusCode: int, jsonBody: string)
+  -{static} string httpEmptyResponse(statusCode: int)
+}
+
+class "main()" as Main <<function>>
+
+' --------- Relationships ----------
+BackOfficeServer --> BackOfficeConfig : uses
+BackOfficeServer --> TicketStock : holds ref
+
+TicketStock --> Ticket : appends
+TicketStock ..> "nlohmann::json" : uses
+
+BackOfficeServer ..> Ticket : creates
+BackOfficeServer ..> TimeUtils : calls
+BackOfficeServer ..> Base64 : calls
+BackOfficeServer ..> "POSIX sockets" : socket/bind/listen/accept/read/write/close
+
+Main ..> BackOfficeConfig : creates
+Main ..> TicketStock : creates
+Main ..> BackOfficeServer : creates & runs
+
+@enduml

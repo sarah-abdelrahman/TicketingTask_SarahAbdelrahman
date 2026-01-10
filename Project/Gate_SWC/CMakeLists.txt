@@ -10,6 +10,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 find_library(PAHO_MQTTPP3 NAMES paho-mqttpp3)
 find_library(PAHO_MQTT3AS NAMES paho-mqtt3as)
 
+find_package(CURL REQUIRED)
+
 if(NOT PAHO_MQTTPP3 OR NOT PAHO_MQTT3AS)
     message(FATAL_ERROR "Paho MQTT libraries not found.")
 endif()
@@ -25,6 +27,7 @@ target_include_directories(gate_app PRIVATE
 target_link_libraries(gate_app
     ${PAHO_MQTTPP3}
     ${PAHO_MQTT3AS}
+    CURL::libcurl
 )
 
 add_custom_target(gate DEPENDS gate_app)

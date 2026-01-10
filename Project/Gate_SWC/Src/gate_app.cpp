@@ -1,75 +1,92 @@
-#include <mqtt/async_client.h>
 #include <iostream>
 #include <string>
-#include <random>
-#include <chrono>
-#include <future>
+#include <cstdlib>
+#include <curl/curl.h>
+#include <nlohmann/json.hpp>
 
-static std::string getenv_or(const char* key, const std::string& defval) {
-    const char* v = std::getenv(key);
-    return (v && *v) ? std::string(v) : defval;
+using nlohmann::json;
+
+static std::string envOr(const char* key, const char* defVal) {
+    if (const char* v = std::getenv(key)) return v;
+    return defVal;
 }
 
-static int random_int(int lo, int hi) {
-    static thread_local std::mt19937 rng{std::random_device{}()};
-    std::uniform_int_distribution<int> dist(lo, hi);
-    return dist(rng);
+static size_t write_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    auto* out = static_cast<std::string*>(userdata);
+    out->append(ptr, size * nmemb);
+    return size * nmemb;
 }
 
-class Callback : public virtual mqtt::callback {
-public:
-    explicit Callback(std::promise<std::string>& p) : prom_(p) {}
-    void message_arrived(mqtt::const_message_ptr msg) override { prom_.set_value(msg->to_string()); }
-    void connection_lost(const std::string&) override {}
-    void delivery_complete(mqtt::delivery_token_ptr) override {}
-private:
-    std::promise<std::string>& prom_;
-};
+static bool postJson(const std::string& url, const std::string& body, int timeoutSec,
+                     long& httpCodeOut, std::string& respOut) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return false;
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Accept: application/json");
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSec);
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &respOut);
+
+    CURLcode rc = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCodeOut);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    return rc == CURLE_OK;
+}
 
 int main() {
-    const std::string host = getenv_or("MQTT_HOST", "mosquitto");
-    const std::string port = getenv_or("MQTT_PORT", "1883");
-    const std::string server_uri = "tcp://" + host + ":" + port;
+    const std::string backofficeBase = envOr("BACKOFFICE_BASE_URL", "http://127.0.0.1:8080");
+    const std::string validateUrl = backofficeBase + "/api/v1/validate";
 
-    const std::string client_id = "gate_" + std::to_string(std::time(nullptr));
-    mqtt::async_client client(server_uri, client_id);
+    std::cout << "[GATE] BackOffice Validate URL: " << validateUrl << "\n";
 
-    mqtt::connect_options conn;
-    conn.set_clean_session(true);
-    conn.set_keep_alive_interval(20);
+    curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    std::promise<std::string> prom;
-    auto fut = prom.get_future();
-    Callback cb(prom);
-    client.set_callback(cb);
+    while (true) {
+        std::string ticketBase64;
+        std::cout << "\nEnter ticketBase64 (or 'exit'): ";
+        std::cin >> ticketBase64;
 
-    try {
-        std::cout << "[GATE] Connecting to " << server_uri << " ...\n";
-        client.connect(conn)->wait();
+        if (ticketBase64 == "exit") break;
 
-        client.subscribe("ticketing/gate/response", 1)->wait();
+        json req = { {"ticketBase64", ticketBase64} };
 
-        int r = random_int(1000, 9999);
-        std::string req = "GATE request | rand=" + std::to_string(r);
+        long httpCode = 0;
+        std::string resp;
 
-        auto msg = mqtt::make_message("ticketing/gate/request", req);
-        msg->set_qos(1);
-
-        std::cout << "[GATE] Publishing: " << req << "\n";
-        client.publish(msg)->wait();
-
-        std::cout << "[GATE] Waiting for response...\n";
-        if (fut.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
-            std::cerr << "[GATE] Timeout waiting for response.\n";
-            return 2;
+        const bool ok = postJson(validateUrl, req.dump(), 5, httpCode, resp);
+        if (!ok) {
+            std::cout << "[GATE] ERROR: REST request failed\n";
+            continue;
+        }
+        if (httpCode < 200 || httpCode >= 300) {
+            std::cout << "[GATE] ERROR: HTTP " << httpCode << " resp=" << resp << "\n";
+            continue;
         }
 
-        std::cout << "[GATE] Response: " << fut.get() << "\n";
+        try {
+            json j = json::parse(resp);
+            const bool valid = j.value("valid", false);
 
-        client.disconnect()->wait();
-        return 0;
-    } catch (const mqtt::exception& e) {
-        std::cerr << "[GATE] MQTT error: " << e.what() << "\n";
-        return 1;
+            if (valid) std::cout << "[GATE] Ticket VALID\n";
+            else       std::cout << "[GATE] Ticket INVALID\n";
+        }
+        catch (...) {
+            std::cout << "[GATE] ERROR: invalid JSON response: " << resp << "\n";
+        }
     }
+
+    curl_global_cleanup();
+    return 0;
 }
