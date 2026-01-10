@@ -158,3 +158,6 @@ private:
     SaleInput readInput();
     bool isValid(const SaleInput& input);
 };
+
+#define TVM_MAX_VALIDITY_DAYS (int)30
+#define TVM_MAX_LINE_NUMBER (int)4
