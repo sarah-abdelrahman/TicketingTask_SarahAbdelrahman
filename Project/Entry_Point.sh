@@ -102,7 +102,7 @@ echo "[ENTRY] Starting backoffice in background: $BACKOFFICE"
 BO_PID=$!
 
 while true; do
-  echo ""
+  echo " enter a number to select an option"
   echo "1) Select TVM if you want to puchase a new ticket "
   echo "2) Select Gate if You want to validate your ticket"
   echo "q) Quit"
