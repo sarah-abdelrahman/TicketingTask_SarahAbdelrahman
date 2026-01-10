@@ -6,6 +6,7 @@
 #include <ctime>
 #include <random>
 #include <cstring>
+#include <iomanip>  
 
 // POSIX sockets
 #include <unistd.h>
@@ -16,7 +17,7 @@
 using nlohmann::json;
 
 // ============================
-// TimeUtils
+// TimeUtils helper
 // ============================
 std::string TimeUtils::nowUtcIso8601() {
     std::time_t t = std::time(nullptr);
@@ -29,6 +30,28 @@ std::string TimeUtils::nowUtcIso8601() {
     char buf[32];
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &utc);
     return std::string(buf);
+}
+
+static std::time_t parseUtcIso8601(const std::string& s) {
+    // Input format: "YYYY-MM-DDTHH:MM:SSZ"
+    std::tm tm{};
+    std::istringstream iss(s);
+    iss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+    if (iss.fail()) return (std::time_t)-1;
+
+    // ASSUMPTION: Linux/glibc -> timegm exists
+    return timegm(&tm);
+}
+
+static bool isExpiredUtc(const std::string& creationUtc, int validityDays) {
+    if (validityDays <= 0) return true;
+
+    std::time_t created = parseUtcIso8601(creationUtc);
+    if (created == (std::time_t)-1) return true;
+
+    const std::time_t now = std::time(nullptr);
+    const std::time_t expires = created + (std::time_t)validityDays * 24 * 60 * 60;
+    return now > expires;
 }
 
 // ============================
@@ -80,7 +103,6 @@ void TicketStock::saveArray(const json& arr) {
 void TicketStock::append(const Ticket& t) {
     json arr = loadOrCreateArray();
 
-    // Stock file contains full ticket record (requirements)
     json entry = {
         {"creationDateUtc", t.creationDateUtc},
         {"validityDays", t.validityDays},
@@ -90,6 +112,34 @@ void TicketStock::append(const Ticket& t) {
 
     arr.push_back(entry);
     saveArray(arr);
+}
+
+// NEW: lookup function for validation
+bool TicketStock::containsTicketBase64(const std::string& ticketBase64, Ticket& out) const {
+    // Reuse same file read logic (const-correctness not strict here; minimal change)
+    // If you want strict const, make loadOrCreateArray() const as well.
+    std::ifstream in(m_filePath);
+    if (!in.good()) return false;
+
+    json arr;
+    try {
+        in >> arr;
+        if (!arr.is_array()) return false;
+    } catch (...) {
+        return false;
+    }
+
+    for (const auto& e : arr) {
+        if (!e.is_object()) continue;
+        if (e.value("ticketBase64", "") == ticketBase64) {
+            out.ticketBase64 = ticketBase64;
+            out.creationDateUtc = e.value("creationDateUtc", "");
+            out.validityDays = e.value("validityDays", 0);
+            out.lineNumber = e.value("lineNumber", "");
+            return true;
+        }
+    }
+    return false;
 }
 
 // ============================
@@ -134,6 +184,12 @@ bool BackOfficeServer::isTicketCreateRequest(const std::string& req) const {
     return req.find(needle) != std::string::npos;
 }
 
+// NEW: validation route matcher
+bool BackOfficeServer::isValidateRequest(const std::string& req) const {
+    const std::string needle = "POST " + m_cfg.validateEndpoint;
+    return req.find(needle) != std::string::npos;
+}
+
 std::string BackOfficeServer::extractBody(const std::string& req) const {
     // HTTP headers end with \r\n\r\n
     const std::string sep = "\r\n\r\n";
@@ -170,7 +226,6 @@ std::string BackOfficeServer::httpEmptyResponse(int statusCode) {
 }
 
 std::string BackOfficeServer::handleCreateTicket(const std::string& bodyJson) {
-    // Requirements:
     // - Response contains ONLY: success + ticketBase64
     // - But we also store full ticket into stock file.
 
@@ -179,11 +234,9 @@ std::string BackOfficeServer::handleCreateTicket(const std::string& bodyJson) {
     try {
         json req = json::parse(bodyJson);
 
-        // Required fields from TVM
         const int validityDays = req.value("validityDays", 0);
         const std::string lineNumber = req.value("lineNumber", "");
 
-        // Basic validation (keep it minimal)
         if (validityDays <= 0 || lineNumber.empty()) {
             reply["success"] = false;
             reply["ticketBase64"] = "";
@@ -195,19 +248,15 @@ std::string BackOfficeServer::handleCreateTicket(const std::string& bodyJson) {
         t.validityDays = validityDays;
         t.lineNumber = lineNumber;
 
-
-        // Ticket payload used for base64 generation
-        // ASSUMPTION: ticketBase64 is just an encoded string of key=value pairs.
         std::ostringstream payload;
         payload << ";creationDateUtc=" << t.creationDateUtc
                 << ";validityDays=" << t.validityDays
                 << ";lineNumber=" << t.lineNumber;
-                
+
         t.ticketBase64 = Base64::encode(payload.str());
-        // Add to stock file (requirement)
+
         m_stock.append(t);
 
-        // Response only (requirement)
         reply["success"] = true;
         reply["ticketBase64"] = t.ticketBase64;
         return reply.dump();
@@ -215,6 +264,36 @@ std::string BackOfficeServer::handleCreateTicket(const std::string& bodyJson) {
     catch (...) {
         reply["success"] = false;
         reply["ticketBase64"] = "";
+        return reply.dump();
+    }
+}
+
+// NEW: validation handler used by Gate
+std::string BackOfficeServer::handleValidateTicket(const std::string& bodyJson) {
+    json reply;
+    reply["valid"] = false;
+
+    try {
+        json req = json::parse(bodyJson);
+        const std::string ticketBase64 = req.value("ticketBase64", "");
+        if (ticketBase64.empty()) {
+            return reply.dump();
+        }
+
+        Ticket stored;
+        const bool found = m_stock.containsTicketBase64(ticketBase64, stored);
+        if (!found) {
+            return reply.dump();
+        }
+
+        if (isExpiredUtc(stored.creationDateUtc, stored.validityDays)) {
+            return reply.dump();
+        }
+
+        reply["valid"] = true;
+        return reply.dump();
+    }
+    catch (...) {
         return reply.dump();
     }
 }
@@ -228,15 +307,25 @@ void BackOfficeServer::handleClient(int clientFd) {
 
     req.resize(static_cast<size_t>(n));
 
+    const std::string body = extractBody(req);
+
     if (isTicketCreateRequest(req)) {
-        const std::string body = extractBody(req);
         const std::string responseBody = handleCreateTicket(body);
         const std::string resp = httpJsonResponse(200, responseBody);
         ::write(clientFd, resp.c_str(), resp.size());
-    } else {
-        const std::string resp = httpEmptyResponse(404);
-        ::write(clientFd, resp.c_str(), resp.size());
+        return;
     }
+
+    // NEW: route validate endpoint
+    if (isValidateRequest(req)) {
+        const std::string responseBody = handleValidateTicket(body);
+        const std::string resp = httpJsonResponse(200, responseBody);
+        ::write(clientFd, resp.c_str(), resp.size());
+        return;
+    }
+
+    const std::string resp = httpEmptyResponse(404);
+    ::write(clientFd, resp.c_str(), resp.size());
 }
 
 int BackOfficeServer::run() {
@@ -245,6 +334,7 @@ int BackOfficeServer::run() {
 
     std::cout << "[BackOffice] Listening on http://" << m_cfg.bindIp << ":" << m_cfg.port << "\n";
     std::cout << "[BackOffice] Endpoint: POST " << m_cfg.ticketsEndpoint << "\n";
+    std::cout << "[BackOffice] Validate: POST " << m_cfg.validateEndpoint << "\n";
     std::cout << "[BackOffice] Stock file: " << m_cfg.ticketsPath << "\n";
 
     while (true) {
@@ -264,7 +354,6 @@ int BackOfficeServer::run() {
 // ============================
 int main() {
     BackOfficeConfig cfg;
-    // You can override these with env vars later if you want.
 
     TicketStock stock(cfg.ticketsPath);
     BackOfficeServer server(cfg, stock);
