@@ -5,7 +5,7 @@ ROOT="/Workspace"
 BUILD="${ROOT}/build"
 PROJ="${ROOT}/Project"
 
-MOSQ_DIR="/mosquitto"
+MOSQ_DIR="${ROOT}/mosquitto"
 MOSQ_CONF="${MOSQ_DIR}/mosquitto.conf"
 MOSQ_LOG="${MOSQ_DIR}/mosquitto.log"
 
@@ -64,13 +64,38 @@ if [[ "$ok" -ne 1 ]]; then
   exit 2
 fi
 
-# Build all apps
 cd "$PROJ"
-make all
+# Check if all executables already exist
+if pick_exe backoffice_app >/dev/null 2>&1 && \
+   pick_exe tvm_app        >/dev/null 2>&1 && \
+   pick_exe gate_app       >/dev/null 2>&1; then
+    echo "[ENTRY] All executables found. Skipping build."
+else
+# Build all apps
+    echo "[ENTRY] Executables missing. Building applications..."
+    make all
+fi
 
-BACKOFFICE="$(pick_exe backoffice_app)"
-TVM="$(pick_exe tvm_app)"
-GATE="$(pick_exe gate_app)"
+# Resolve executables (after build or skip)
+BACKOFFICE="$(pick_exe backoffice_app)" || {
+    echo "[ERROR] backoffice_app not found after build"
+    exit 1
+}
+
+TVM="$(pick_exe tvm_app)" || {
+    echo "[ERROR] tvm_app not found after build"
+    exit 1
+}
+
+GATE="$(pick_exe gate_app)" || {
+    echo "[ERROR] gate_app not found after build"
+    exit 1
+}
+
+
+# Backoffice base URL for REST clients inside this container:
+# ASSUMPTION: backoffice listens on localhost:8080 inside the same container
+export BACKOFFICE_BASE_URL="${BACKOFFICE_BASE_URL:-http://127.0.0.1:8080}"
 
 echo "[ENTRY] Starting backoffice in background: $BACKOFFICE"
 "$BACKOFFICE" &
@@ -78,8 +103,8 @@ BO_PID=$!
 
 while true; do
   echo ""
-  echo "1) Run TVM"
-  echo "2) Run Gate"
+  echo "1) Select TVM if you want to puchase a new ticket "
+  echo "2) Select Gate if You want to validate your ticket"
   echo "q) Quit"
   read -r -p "Choice: " c
   case "$c" in

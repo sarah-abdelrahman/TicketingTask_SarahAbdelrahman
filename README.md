@@ -1,12 +1,15 @@
 # TicketingTask_SarahAbdelrahman
-Subway Ticketing system simulating ticket vending machine, entrance gate and Backoffice system create and validate the tickets.
+Train Ticketing system simulating ticket vending machine, entrance gate and Backoffice system that create and validate the tickets.
 
 # Project Tree:
 ```text
 .
 ├── mosquitto/
 │   └── mosquitto.conf
-│
+├── build/
+│   ├── backoffice_app
+│   ├── tvm_app
+│   └── gate_app
 ├── Project/
 │   ├── Backoffice_SWC/
 │   │   ├── include/
@@ -30,9 +33,9 @@ Subway Ticketing system simulating ticket vending machine, entrance gate and Bac
 │   │   ├── Src/
 │   │   │   └── TVM_app.cpp
 │   │   ├── tests/
+│   │   ├── CDD/
 │   │   └── CMakeLists.txt
 │   │
-│   ├── build/
 │   ├── Entry_Point.sh
 │   └── Makefile
 │
