@@ -1,0 +1,92 @@
+@startuml
+title TVM - Class Diagram (User input -> REST Back-Office -> Log -> MQTT publish)
+
+'========================
+' Data Models (DTOs)
+'========================
+class SaleInput {
+  +int validityDays
+  +string lineNumber
+}
+
+class TicketInfo {
+  +string ticketId
+  +string creationDate
+  +int validityDays
+  +string lineNumber
+  +string ticketBase64
+}
+
+class SaleResult {
+  +bool success
+  +string errorMessage
+  +TicketInfo ticket
+}
+
+'========================
+' Core Application Classes
+'========================
+class SaleRequestHandler {
+  -TicketSaleService service
+  +void run()
+  -SaleInput readInput()
+  -bool isValid(const SaleInput& in)
+  -void printInvalid()
+  -void printError(const string& msg)
+}
+
+class TicketSaleService {
+  -BackOfficeRestClient restClient
+  -MqttClientAdapter mqtt
+  -JsonSerializer json
+  -int timeoutSeconds = 5
+  -string validationTopic
+
+  +SaleResult processSale(const SaleInput& in)
+
+  -string newRequestId()
+  -void publishForValidation(const TicketInfo& t, const string& requestId)
+}
+
+'========================
+' Adapters
+'========================
+class BackOfficeRestClient {
+  -string baseUrl
+  -int timeoutSeconds = 5
+  +SaleResult createTicket(const SaleInput& in, const string& requestId)
+}
+
+class MqttClientAdapter {
+  +void publish(const string& topic, const string& payload)
+}
+
+class JsonSerializer {
+  -JsonFileLogger logger
+  +void logTicketInfo(const TicketInfo& ticket)
+  +string toValidationPayload(const TicketInfo& ticket, const string& requestId)
+  +string toLogEntryJson(const TicketInfo& ticket)
+}
+
+class JsonFileLogger {
+  -string filePath
+  +void appendLine(const string& jsonLine)
+}
+
+'========================
+' Relationships
+'========================
+SaleRequestHandler --> TicketSaleService : calls processSale()
+SaleRequestHandler ..> SaleInput
+
+TicketSaleService --> BackOfficeRestClient : REST createTicket()
+TicketSaleService --> MqttClientAdapter : publish validation/request
+TicketSaleService --> JsonSerializer : log + serialize
+
+BackOfficeRestClient ..> SaleResult
+SaleResult --> TicketInfo
+TicketSaleService ..> SaleResult
+
+JsonSerializer --> JsonFileLogger : append log entry
+
+@enduml

@@ -1,0 +1,34 @@
+@startuml
+title TVM - Component Diagram (Updated: REST to Back-Office + MQTT Publish)
+
+package "TVM Application" {
+
+  [SaleRequestHandler] as Handler
+  [TicketSaleService] as Service
+
+  [BackOfficeRestClient] as Rest
+  [MqttClientAdapter] as Mqtt
+  [JsonSerializer] as Json
+  [JsonFileLogger] as Log
+}
+
+node "Back-Office System" as BO
+cloud "Mosquitto Broker" as Broker
+
+' User input flow
+Handler --> Service : processSale(validityDays, lineNumber)\n(valid only)
+
+' REST flow (ticket creation)
+Service --> Rest : POST /api/v1/tickets\n{validityDays,lineNumber}
+Rest --> BO : HTTP request
+BO --> Rest : HTTP response\n(ticketId,creationDate,base64,...)
+Rest --> Service : SaleResponse
+
+' Log on success
+Service --> Json : logTicketInfo(ticketId, creationDate,\nvalidityDays, lineNumber)
+Json --> Log : append JSON entry
+
+' Publish base64 for Gate validation (optional but per system requirement)
+Service --> Mqtt : publish validation/request\n{ticketBase64}
+Mqtt --> Broker : MQTT publish
+@enduml
