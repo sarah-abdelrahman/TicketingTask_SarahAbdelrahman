@@ -74,7 +74,7 @@ void JsonFileLogger::appendTicket(const TicketInfo& ticket) {
     // - Validity in Days
     // - Line Number
     json entry = {
-        {"ticketId", ticket.ticketId},
+        {"ticketId", ticket.ticketBase64},
         {"creationDate", ticket.creationDate},
         {"validityDays", ticket.validityDays},
         {"lineNumber", ticket.lineNumber}
@@ -174,13 +174,106 @@ BackOfficeRestClient::BackOfficeRestClient(std::string baseUrl, int timeoutSecon
 }
 
 size_t BackOfficeRestClient::writeCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    auto* out = static_cast<std::string*>(userdata);
+    out->append(ptr, size * nmemb);
     return size * nmemb;
 }
 
 SaleResult BackOfficeRestClient::createTicket(const SaleInput& input, const std::string& requestId) {
     SaleResult result;
+
+    // Build request JSON
+    json req = {
+        {"requestId", requestId},
+        {"validityDays", input.validityDays},
+        {"lineNumber", input.lineNumber}
+    };
+
+    const std::string url = m_baseUrl + "/api/v1/tickets";
+    std::string respBody;
+
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        result.success = false;
+        result.errorMessage = "curl_easy_init failed";
+        return result;
+    }
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Accept: application/json");
+
+    const std::string reqBody = req.dump();
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, reqBody.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)reqBody.size());
+
+    // your timeout requirement
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, m_timeoutSeconds);
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &BackOfficeRestClient::writeCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &respBody);
+
+    CURLcode rc = curl_easy_perform(curl);
+
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (rc != CURLE_OK) {
+        result.success = false;
+        result.errorMessage = std::string("REST error: ") + curl_easy_strerror(rc);
+        return result;
+    }
+
+    if (httpCode < 200 || httpCode >= 300) {
+        result.success = false;
+        result.errorMessage = "REST HTTP " + std::to_string(httpCode) + " body=" + respBody;
+        return result;
+    }
+
+    // Parse JSON response
+    try {
+        json resp = json::parse(respBody);
+
+        // If BackOffice returns success=false
+        if (resp.contains("success") && resp["success"].is_boolean() && resp["success"] == false) {
+            result.success = false;
+            result.errorMessage = resp.value("error", "BackOffice returned success=false");
             return result;
+        }
+
+        const std::string base64 = resp.value("ticketBase64", "");
+        if (base64.empty()) {
+            result.success = false;
+            result.errorMessage = "Missing ticketBase64 in response";
+            return result;
+        }
+
+        // success
+        result.success = true;
+
+        // Fill what we can (some may not be present depending on your BackOffice)
+        result.ticket.ticketBase64 = base64;
+        // result.ticket.ticketId = resp.value("ticketId", "");
+        // result.ticket.creationDate = resp.value("creationDate", "");
+        // result.ticket.validityDays = resp.value("validityDays", input.validityDays);
+        // result.ticket.lineNumber = resp.value("lineNumber", input.lineNumber);
+
+        return result;
+    }
+    catch (const std::exception& ex) {
+        result.success = false;
+        result.errorMessage = std::string("Invalid JSON response: ") + ex.what();
+        return result;
+    }
 }
+
 
 // ==================== TicketSaleService ====================
 
@@ -197,37 +290,54 @@ TicketSaleService::TicketSaleService(BackOfficeRestClient& rest,
 
 
 SaleResult TicketSaleService::processSale(const SaleInput& input) {
-    const std::string requestId;
-    std::time_t now = std::time(nullptr);
-    SaleResult result;
-    result.success=true;
+    // Minimal requestId generator (no extra helper function)
+    static thread_local std::mt19937 rng{std::random_device{}()};
+    static const char* hex = "0123456789abcdef";
+    std::string requestId;
+    requestId.reserve(16);
+    for (int i = 0; i < 16; ++i) requestId.push_back(hex[rng() % 16]);
 
+    // 1) REST call to BackOffice (gets ticketBase64)
+    SaleResult result = m_rest.createTicket(input, requestId);
+    if (!result.success) {
+        if (result.errorMessage.empty())
+            result.errorMessage = "Ticket creation failed.";
+        return result;
+    }
 
-if (result.success==true)
-{
-    result.ticket.creationDate = std::ctime(&now);
-    result.ticket.creationDate.pop_back(); 
+    // 2) Ensure creationDate exists (if BackOffice didn't provide it)
+    if (result.ticket.creationDate.empty()) {
+        std::time_t now = std::time(nullptr);
+        result.ticket.creationDate = std::ctime(&now);
+        result.ticket.creationDate.pop_back(); 
+    }
+
     result.ticket.lineNumber = input.lineNumber;
     result.ticket.validityDays = input.validityDays;
-    // Publish base64 for Gate validation
+
+    // 3) Publish to MQTT only if success
     json msg = {
-        {"ticketIdBase64", result.ticket.ticketBase64},
+        {"ticketBase64", result.ticket.ticketBase64},
         {"creationDate", result.ticket.creationDate},
         {"validityDays", result.ticket.validityDays},
-        {"lineNumber", result.ticket.lineNumber}
+        {"lineNumber", result.ticket.lineNumber},
+        {"requestId", requestId}
     };
+
     const bool published = m_mqtt.publish(m_validationTopic, msg.dump());
     if (!published) {
         result.success = false;
         result.errorMessage = "Ticket created, but MQTT publish failed.";
-
-    }    else
-    {
-            std::cout << "\npuplish success ";
-                // Log ticket info to JSON file
-          m_logger.appendTicket(result.ticket);
+        return result;
     }
-}
+
+    std::cout << "\n[TVM] Publish success\n";
+
+    // 4) Log only after publish success
+    m_logger.appendTicket(result.ticket);
+        std::cout << "[TVM] Dear Costumer Your ticker ID is : " << result.ticket.ticketBase64 << "\n";
+        std::cout << "[TVM] Copy it to validate it on GATE\n";
+
     return result;
 }
 
@@ -279,21 +389,20 @@ bool SaleRequestHandler::isValid(const SaleInput& input) {
 }
 
 void SaleRequestHandler::run() {
-    while (true) {
         SaleInput input = readInput();
 
-        if (!isValid(input)) {
-            continue;
-        }
+        if (isValid(input)) 
+        {
 
-        SaleResult result = m_service.processSale(input);
-        if (!result.success) {
-            std::cout << "ERROR: " << result.errorMessage << "\n";
-            continue;
+            SaleResult result = m_service.processSale(input);
+            if (!result.success) {
+                std::cout << "ERROR: " << result.errorMessage << "\n";
+            }
+            else
+            {
+                std::cout << "Ticket created successfully: " << result.ticket.ticketId << "\n";
+            }
         }
-
-        std::cout << "Ticket created successfully: " << result.ticket.ticketId << "\n";
-    }
 }
 
 // ==================== main() ====================
@@ -315,6 +424,7 @@ int main() {
     std::cout << "[TVM] BackOffice=" << backofficeBase << "\n";
     std::cout << "[TVM] ValidationTopic=" << validationTopic << "\n";
     std::cout << "[TVM] LogFile=" << logFile << "\n";
+    curl_global_init(CURL_GLOBAL_DEFAULT);
 
     // Setup dependencies
     JsonFileLogger logger(logFile);
@@ -324,12 +434,24 @@ int main() {
     if (!mqtt.connect()) {
         std::cerr << "ERROR: Failed to connect to MQTT broker at "
                   << mqttHost << ":" << mqttPort << "\n";
+        curl_global_cleanup();
         return 1;
     }
 
     TicketSaleService service(rest, mqtt, logger, validationTopic, 5);
     SaleRequestHandler handler(service);
-    handler.run();
+while(true)
+{
+    std::cout << "\nDo you want to purchas a ticket? (y/n):  ";
+    std::string ans;
+    std::cin >> ans;
 
+      if (ans != "y" && ans != "Y"){
+        break;
+    }
+    handler.run();
+}
+
+    curl_global_cleanup();
     return 0;
 }
