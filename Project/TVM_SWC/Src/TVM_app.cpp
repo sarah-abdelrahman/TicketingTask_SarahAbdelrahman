@@ -7,6 +7,7 @@
 #include <future>
 #include <random>
 #include <cstdlib>
+#include <curl/curl.h>
 using nlohmann::json;
 
 
@@ -25,6 +26,15 @@ static int envIntOr(const char* key, int defVal) {
     }
 }
 
+bool toInt(const std::string& s, int& out) {
+    try {
+        size_t pos = 0;
+        out = std::stoi(s, &pos);
+        return pos == s.size(); // ensure whole string was used
+    } catch (...) {
+        return false;
+    }
+}
 // ==================== JsonFileLogger ====================
 
 JsonFileLogger::JsonFileLogger(std::string filePath)
@@ -52,7 +62,7 @@ json JsonFileLogger::loadOrCreateArray() {
 
 void JsonFileLogger::saveArray(const json& arr) {
     std::ofstream out(m_filePath, std::ios::trunc);
-    out << arr.dump(2); // pretty JSON
+    out << arr.dump(2); 
 }
 
 void JsonFileLogger::appendTicket(const TicketInfo& ticket) {
@@ -75,7 +85,6 @@ void JsonFileLogger::appendTicket(const TicketInfo& ticket) {
 }
 
 // ==================== MqttClientAdapter ====================
-
 MqttClientAdapter::MqttClientAdapter(std::string host, int port, std::string clientId)
     : m_host(std::move(host)), m_port(port), m_clientId(std::move(clientId)) {
 
@@ -144,7 +153,7 @@ bool MqttClientAdapter::publish(const std::string& topic,
 
         m_client->publish(msg)->wait();
 
-        std::cout << "[MQTT] Published successfully\n"
+        std::cout << "[TVM] Published successfully\n"
                   << "       Topic: " << topic << "\n"
                   << "       Payload: " << payload << "\n";
 
@@ -165,8 +174,6 @@ BackOfficeRestClient::BackOfficeRestClient(std::string baseUrl, int timeoutSecon
 }
 
 size_t BackOfficeRestClient::writeCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
-    auto* out = static_cast<std::string*>(userdata);
-    out->append(ptr, size * nmemb);
     return size * nmemb;
 }
 
@@ -191,36 +198,36 @@ TicketSaleService::TicketSaleService(BackOfficeRestClient& rest,
 
 SaleResult TicketSaleService::processSale(const SaleInput& input) {
     const std::string requestId;
+    std::time_t now = std::time(nullptr);
     SaleResult result;
     result.success=true;
 
-    // Log ticket info to JSON file
-    m_logger.appendTicket(result.ticket);
 
+if (result.success==true)
+{
+    result.ticket.creationDate = std::ctime(&now);
+    result.ticket.creationDate.pop_back(); 
+    result.ticket.lineNumber = input.lineNumber;
+    result.ticket.validityDays = input.validityDays;
     // Publish base64 for Gate validation
     json msg = {
-        {"requestId", requestId},
-        {"ticketBase64", result.ticket.ticketBase64}
+        {"ticketIdBase64", result.ticket.ticketBase64},
+        {"creationDate", result.ticket.creationDate},
+        {"validityDays", result.ticket.validityDays},
+        {"lineNumber", result.ticket.lineNumber}
     };
- 
     const bool published = m_mqtt.publish(m_validationTopic, msg.dump());
     if (!published) {
-        // ASSUMPTION:
-        // Ticket is created but not delivered to Gate. Decide system behavior.
-        // Option A (current): treat as failure for TVM user experience.
         result.success = false;
         result.errorMessage = "Ticket created, but MQTT publish failed.";
-
-        // Option B: keep success true and only warn:
-        // result.success = true;
-        // result.errorMessage = "Warning: MQTT publish failed.";
 
     }    else
     {
             std::cout << "\npuplish success ";
-
+                // Log ticket info to JSON file
+          m_logger.appendTicket(result.ticket);
     }
-    
+}
     return result;
 }
 
@@ -230,19 +237,45 @@ SaleRequestHandler::SaleRequestHandler(TicketSaleService& service)
     : m_service(service) {}
 
 SaleInput SaleRequestHandler::readInput() {
-    SaleInput in{};
-    std::cout << "\nEnter validity days: ";
-    std::cin >> in.validityDays;
+ SaleInput in{};
+
+    // Read validityDays safely
+    while (true) {
+        std::cout << "\nEnter validity days: ";
+        if (std::cin >> in.validityDays) {
+            break; // good int read
+        }
+        // Bad input (e.g., character). Reset stream and discard garbage.
+        std::cout << "Invalid input. Please enter a number.\n";
+        std::cin.clear(); // clear failbit
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // discard line
+    }
+
+    // Read lineNumber (string) normally
     std::cout << "Enter line number: ";
     std::cin >> in.lineNumber;
+
     return in;
 }
 
 bool SaleRequestHandler::isValid(const SaleInput& input) {
     // Minimal validation
-    if (input.validityDays <= 0) return false;
-    if (input.lineNumber.empty()) return false;
-    return true;
+    int line_number=0;
+    bool inputvalid=true;
+    (void)toInt(input.lineNumber,line_number);
+
+    if ((input.validityDays <= 0)||(input.validityDays > TVM_MAX_VALIDITY_DAYS)) 
+    {
+        std::cout << "not Accepted Validity days input. Please try again.\n Please enter number of days from 1 to 30\n";
+        inputvalid= false;
+    }
+    if ((input.lineNumber.empty())||(line_number <= 0)||(line_number > TVM_MAX_LINE_NUMBER))
+    {
+        std::cout << "not Accepted Line Number input. Please try again.\n Please enter Line number from 1 to 4\n";
+        inputvalid= false;
+    } 
+
+    return inputvalid;
 }
 
 void SaleRequestHandler::run() {
@@ -250,7 +283,6 @@ void SaleRequestHandler::run() {
         SaleInput input = readInput();
 
         if (!isValid(input)) {
-            std::cout << "Not valid input. Please try again.\n";
             continue;
         }
 
@@ -279,10 +311,10 @@ int main() {
     const std::string validationTopic = envOr("Sale_TOPIC", "Sale/request");
     const std::string logFile = envOr("TICKETS_LOG_FILE", "tickets.json");
 
-    std::cout << "[CONFIG] MQTT=" << mqttHost << ":" << mqttPort << "\n";
-    std::cout << "[CONFIG] BackOffice=" << backofficeBase << "\n";
-    std::cout << "[CONFIG] ValidationTopic=" << validationTopic << "\n";
-    std::cout << "[CONFIG] LogFile=" << logFile << "\n";
+    std::cout << "[TVM] MQTT=" << mqttHost << ":" << mqttPort << "\n";
+    std::cout << "[TVM] BackOffice=" << backofficeBase << "\n";
+    std::cout << "[TVM] ValidationTopic=" << validationTopic << "\n";
+    std::cout << "[TVM] LogFile=" << logFile << "\n";
 
     // Setup dependencies
     JsonFileLogger logger(logFile);
